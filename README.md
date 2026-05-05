@@ -7,6 +7,9 @@ A professional full-stack web app to upload any CSV file and instantly get:
 - 🗃️ Searchable data table preview
 
 ---
+## 🌐 Live Demo
+
+👉 https://data-dashboard-project.onrender.com
 
 ## 🚀 Run Locally
 
