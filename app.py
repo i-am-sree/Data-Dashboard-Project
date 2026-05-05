@@ -32,6 +32,8 @@ def upload():
 
         # --- TABLE DATA ---
         df_clean = df.where(pd.notnull(df), None)
+        # Replace NaN/inf values with None for JSON serialization
+        df_clean = df_clean.replace([np.nan, np.inf, -np.inf], None)
         table_data = {
             'columns': list(df.columns),
             'rows': df_clean.head(100).values.tolist(),
@@ -44,12 +46,14 @@ def upload():
         summary = {}
         for col in numeric_cols:
             col_data = df[col].dropna()
+            if len(col_data) == 0:
+                continue  # Skip columns with all NaN values
             summary[col] = {
-                'mean': round(float(col_data.mean()), 2),
-                'median': round(float(col_data.median()), 2),
-                'std': round(float(col_data.std()), 2),
-                'min': round(float(col_data.min()), 2),
-                'max': round(float(col_data.max()), 2),
+                'mean': round(float(col_data.mean()), 2) if len(col_data) > 0 else None,
+                'median': round(float(col_data.median()), 2) if len(col_data) > 0 else None,
+                'std': round(float(col_data.std()), 2) if len(col_data) > 1 else None,
+                'min': round(float(col_data.min()), 2) if len(col_data) > 0 else None,
+                'max': round(float(col_data.max()), 2) if len(col_data) > 0 else None,
                 'count': int(col_data.count()),
                 'nulls': int(df[col].isnull().sum())
             }
@@ -60,7 +64,10 @@ def upload():
         # Bar chart for numeric columns (first 6)
         if numeric_cols:
             bar_cols = numeric_cols[:6]
-            means = [round(float(df[c].mean()), 2) for c in bar_cols]
+            means = []
+            for c in bar_cols:
+                col_mean = df[c].mean()
+                means.append(round(float(col_mean), 2) if pd.notna(col_mean) else None)
             charts.append({
                 'id': 'bar_means',
                 'type': 'bar',
@@ -78,18 +85,21 @@ def upload():
             values = df[col].dropna().tolist()
             # Bin into 10 buckets
             if len(values) > 1:
-                hist, bin_edges = np.histogram(values, bins=10)
-                bin_labels = [f"{round(bin_edges[i],1)}–{round(bin_edges[i+1],1)}" for i in range(len(bin_edges)-1)]
-                charts.append({
-                    'id': 'histogram',
-                    'type': 'bar',
-                    'title': f'Distribution of {col}',
-                    'labels': bin_labels,
-                    'datasets': [{
-                        'label': 'Frequency',
-                        'data': hist.tolist()
-                    }]
-                })
+                try:
+                    hist, bin_edges = np.histogram(values, bins=10)
+                    bin_labels = [f"{round(bin_edges[i],1)}–{round(bin_edges[i+1],1)}" for i in range(len(bin_edges)-1)]
+                    charts.append({
+                        'id': 'histogram',
+                        'type': 'bar',
+                        'title': f'Distribution of {col}',
+                        'labels': bin_labels,
+                        'datasets': [{
+                            'label': 'Frequency',
+                            'data': hist.tolist()
+                        }]
+                    })
+                except:
+                    pass  # Skip histogram if calculation fails
 
         # Pie chart for first categorical column
         cat_cols = df.select_dtypes(include=['object']).columns.tolist()
@@ -109,17 +119,21 @@ def upload():
 
         # Line chart if there are 2+ numeric cols
         if len(numeric_cols) >= 2:
-            sample = df[numeric_cols[:2]].dropna().head(50)
-            charts.append({
-                'id': 'line_trend',
-                'type': 'line',
-                'title': f'{numeric_cols[0]} vs {numeric_cols[1]}',
-                'labels': list(range(1, len(sample)+1)),
-                'datasets': [
-                    {'label': numeric_cols[0], 'data': sample[numeric_cols[0]].round(2).tolist()},
-                    {'label': numeric_cols[1], 'data': sample[numeric_cols[1]].round(2).tolist()}
-                ]
-            })
+            try:
+                sample = df[numeric_cols[:2]].dropna().head(50)
+                if len(sample) > 0:
+                    charts.append({
+                        'id': 'line_trend',
+                        'type': 'line',
+                        'title': f'{numeric_cols[0]} vs {numeric_cols[1]}',
+                        'labels': list(range(1, len(sample)+1)),
+                        'datasets': [
+                            {'label': numeric_cols[0], 'data': sample[numeric_cols[0]].round(2).tolist()},
+                            {'label': numeric_cols[1], 'data': sample[numeric_cols[1]].round(2).tolist()}
+                        ]
+                    })
+            except:
+                pass  # Skip line chart if calculation fails
 
         # Missing values chart
         missing = {col: int(df[col].isnull().sum()) for col in df.columns if df[col].isnull().sum() > 0}
