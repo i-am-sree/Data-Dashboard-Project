@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Data-DashBoard — CSV Analytics Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">📊</div>
+    <h1>Data-DashBoard</h1>
+  </div>
+  <p class="tagline">// upload csv → instant insights</p>
+</header>
+
+<main>
+  <!-- UPLOAD SECTION -->
+  <section class="upload-section">
+    <div class="drop-zone" id="drop-zone">
+      <span class="drop-icon">🗂️</span>
+      <h2>Drop your CSV file here</h2>
+      <p>or click to browse your files</p>
+      <label class="btn-upload" for="file-input">Choose CSV File</label>
+      <input type="file" id="file-input" accept=".csv" />
+    </div>
+    <div class="loading-bar" id="loading-bar">
+      <div class="loading-bar-inner"></div>
+    </div>
+    <div class="error-box" id="error-box"></div>
+  </section>
+
+  <!-- RESULTS -->
+  <section id="results">
+
+    <!-- File badge -->
+    <div class="file-badge" id="file-badge">📄 filename.csv</div>
+
+    <!-- Quick Stats -->
+    <div class="section-label">Overview</div>
+    <div class="section-title">Dataset at a Glance</div>
+    <div class="stats-grid" id="stats-grid"></div>
+
+    <!-- Insights -->
+    <div class="section-label">Auto Insights</div>
+    <div class="section-title">What the Data Says</div>
+    <div class="insights-grid" id="insights-grid"></div>
+
+    <!-- Charts -->
+    <div class="section-label">Visualizations</div>
+    <div class="section-title">Charts & Graphs</div>
+    <div class="charts-grid" id="charts-grid"></div>
+
+    <!-- Summary Stats Table -->
+    <div class="summary-section">
+      <div class="section-label">Statistics</div>
+      <div class="section-title">Column Summary</div>
+      <div class="summary-table-wrap">
+        <table class="summary-table" id="summary-table">
+          <thead>
+            <tr>
+              <th>Column</th>
+              <th>Mean</th>
+              <th>Median</th>
+              <th>Std Dev</th>
+              <th>Min</th>
+              <th>Max</th>
+              <th>Count</th>
+              <th>Nulls</th>
+            </tr>
+          </thead>
+          <tbody id="summary-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Data Table -->
+    <div class="data-table-section">
+      <div class="section-label">Raw Data</div>
+      <div class="section-title">Data Preview</div>
+      <div class="table-controls">
+        <input class="search-box" id="search-box" placeholder="🔍 Search table..." type="text"/>
+        <span class="row-count" id="row-count"></span>
+      </div>
+      <div class="data-table-wrap">
+        <table class="data-table" id="data-table">
+          <thead id="table-head"></thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </section>
+</main>
+
+<script>
+// ─── CHART COLOR PALETTES ───────────────────────────────────────────────────
+const PALETTE = [
+  '#7c6dfa','#fa6d8a','#6dfabc','#fabc6d','#6db5fa','#fa6ddc',
+  '#bcfa6d','#6dfafa','#fa9a6d','#a06dfa'
+];
+
+const CHART_DEFAULTS = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: {
+      labels: { color: '#e8e8f0', font: { family: 'DM Mono', size: 10 } }
+    },
+    tooltip: {
+      backgroundColor: '#1a1a24',
+      borderColor: '#2a2a3a',
+      borderWidth: 1,
+      titleColor: '#7c6dfa',
+      bodyColor: '#e8e8f0',
+      titleFont: { family: 'DM Mono' },
+      bodyFont: { family: 'DM Mono' }
+    }
+  },
+  scales: {
+    x: {
+      ticks: { color: '#6b6b80', font: { family: 'DM Mono', size: 9 }, maxRotation: 30 },
+      grid: { color: 'rgba(42,42,58,0.5)' }
+    },
+    y: {
+      ticks: { color: '#6b6b80', font: { family: 'DM Mono', size: 9 } },
+      grid: { color: 'rgba(42,42,58,0.5)' }
+    }
+  }
+};
+
+// ─── CHART INSTANCES ──────────────────────────────────────────────────────────
+const chartInstances = {};
+
+function destroyAllCharts() {
+  Object.values(chartInstances).forEach(c => c.destroy());
+  Object.keys(chartInstances).forEach(k => delete chartInstances[k]);
+}
+
+// ─── RENDER CHARTS ───────────────────────────────────────────────────────────
+function renderCharts(charts) {
+  const grid = document.getElementById('charts-grid');
+  grid.innerHTML = '';
+  destroyAllCharts();
+
+  charts.forEach(chart => {
+    const card = document.createElement('div');
+    card.className = 'chart-card';
+    card.innerHTML = `
+      <div class="chart-title">${chart.title}</div>
+      <div class="chart-wrap"><canvas id="canvas-${chart.id}"></canvas></div>
+    `;
+    grid.appendChild(card);
+
+    const ctx = document.getElementById(`canvas-${chart.id}`).getContext('2d');
+
+    const isDoughnut = chart.type === 'doughnut';
+    const isLine = chart.type === 'line';
+
+    const datasets = chart.datasets.map((ds, i) => {
+      const base = {
+        label: ds.label,
+        data: ds.data,
+      };
+      if (isDoughnut) {
+        base.backgroundColor = PALETTE;
+        base.borderColor = '#0a0a0f';
+        base.borderWidth = 2;
+      } else if (isLine) {
+        base.borderColor = PALETTE[i];
+        base.backgroundColor = PALETTE[i] + '20';
+        base.tension = 0.4;
+        base.fill = true;
+        base.pointRadius = 3;
+        base.pointBackgroundColor = PALETTE[i];
+      } else {
+        base.backgroundColor = PALETTE.map(c => c + 'cc');
+        base.borderColor = PALETTE;
+        base.borderWidth = 1;
+        base.borderRadius = 6;
+      }
+      return base;
+    });
+
+    const options = JSON.parse(JSON.stringify(CHART_DEFAULTS));
+    if (isDoughnut) {
+      delete options.scales;
+      options.plugins.legend.position = 'right';
+    }
+
+    chartInstances[chart.id] = new Chart(ctx, {
+      type: chart.type,
+      data: { labels: chart.labels, datasets },
+      options
+    });
+  });
+}
+
+// ─── RENDER SUMMARY TABLE ────────────────────────────────────────────────────
+function renderSummary(summary) {
+  const tbody = document.getElementById('summary-tbody');
+  tbody.innerHTML = '';
+  Object.entries(summary).forEach(([col, s]) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="color:var(--accent3);font-weight:700;">${col}</td>
+      <td>${s.mean}</td><td>${s.median}</td><td>${s.std}</td>
+      <td>${s.min}</td><td>${s.max}</td><td>${s.count}</td>
+      <td style="color:${s.nulls > 0 ? 'var(--accent2)' : 'var(--accent3)'};">${s.nulls}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ─── RENDER DATA TABLE ───────────────────────────────────────────────────────
+let allRows = [], allCols = [];
+
+function renderDataTable(columns, rows, total) {
+  allCols = columns;
+  allRows = rows;
+
+  const head = document.getElementById('table-head');
+  head.innerHTML = '<tr>' + columns.map(c => `<th>${c}</th>`).join('') + '</tr>';
+
+  document.getElementById('row-count').textContent =
+    `Showing ${rows.length} of ${total} rows`;
+
+  renderTableBody(rows);
+}
+
+function renderTableBody(rows) {
+  const tbody = document.getElementById('table-body');
+  tbody.innerHTML = '';
+  rows.forEach(row => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = row.map(cell =>
+      `<td title="${cell ?? ''}">${cell === null || cell === undefined ? '<span style="color:var(--muted)">—</span>' : cell}</td>`
+    ).join('');
+    tbody.appendChild(tr);
+  });
+}
+
+// ─── SEARCH ──────────────────────────────────────────────────────────────────
+document.getElementById('search-box').addEventListener('input', function() {
+  const q = this.value.toLowerCase();
+  if (!q) { renderTableBody(allRows); return; }
+  const filtered = allRows.filter(row =>
+    row.some(cell => String(cell ?? '').toLowerCase().includes(q))
+  );
+  renderTableBody(filtered);
+});
+
+// ─── RENDER STATS ────────────────────────────────────────────────────────────
+function renderStats(table, summary) {
+  const grid = document.getElementById('stats-grid');
+  const numCols = Object.keys(summary).length;
+
+  const cards = [
+    { label: 'Total Rows', value: table.total_rows.toLocaleString(), sub: 'records' },
+    { label: 'Columns', value: table.total_cols, sub: 'fields' },
+    { label: 'Numeric Cols', value: numCols, sub: 'analyzable' },
+  ];
+
+  if (numCols > 0) {
+    const first = Object.values(summary)[0];
+    cards.push({ label: 'Avg (first col)', value: first.mean, sub: Object.keys(summary)[0] });
+    cards.push({ label: 'Missing Values', value: Object.values(summary).reduce((a, s) => a + s.nulls, 0), sub: 'total nulls' });
+  }
+
+  grid.innerHTML = cards.map(c => `
+    <div class="stat-card">
+      <div class="stat-label">${c.label}</div>
+      <div class="stat-value">${c.value}</div>
+      <div class="stat-sub">${c.sub}</div>
+    </div>
+  `).join('');
+}
+
+// ─── RENDER INSIGHTS ─────────────────────────────────────────────────────────
+function renderInsights(insights) {
+  const grid = document.getElementById('insights-grid');
+  grid.innerHTML = insights.map(i => `<div class="insight-card">${i}</div>`).join('');
+}
+
+// ─── UPLOAD HANDLER ──────────────────────────────────────────────────────────
+function handleFile(file) {
+  if (!file) return;
+  if (!file.name.endsWith('.csv')) {
+    showError('Please upload a valid .csv file.');
+    return;
+  }
+
+  const loadingBar = document.getElementById('loading-bar');
+  const errorBox = document.getElementById('error-box');
+  const results = document.getElementById('results');
+
+  errorBox.classList.remove('visible');
+  results.classList.remove('visible');
+  loadingBar.classList.add('active');
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  fetch('/upload', { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(data => {
+      loadingBar.classList.remove('active');
+
+      if (data.error) { showError(data.error); return; }
+
+      document.getElementById('file-badge').textContent = `📄 ${data.filename}`;
+      renderStats(data.table, data.summary);
+      renderInsights(data.insights);
+      renderCharts(data.charts);
+      renderSummary(data.summary);
+      renderDataTable(data.table.columns, data.table.rows, data.table.total_rows);
+
+      results.classList.add('visible');
+      results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    })
+    .catch(err => {
+      loadingBar.classList.remove('active');
+      showError('Something went wrong. Please try again.');
+    });
+}
+
+function showError(msg) {
+  const box = document.getElementById('error-box');
+  box.textContent = '⚠️ ' + msg;
+  box.classList.add('visible');
+}
+
+// ─── FILE INPUT ───────────────────────────────────────────────────────────────
+document.getElementById('file-input').addEventListener('change', function() {
+  if (this.files[0]) handleFile(this.files[0]);
+});
+
+// ─── DRAG & DROP ─────────────────────────────────────────────────────────────
+const dropZone = document.getElementById('drop-zone');
+
+dropZone.addEventListener('click', () => document.getElementById('file-input').click());
+
+dropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropZone.classList.add('drag-over');
+});
+
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  handleFile(file);
+});
+</script>
+</body>
+</html>
