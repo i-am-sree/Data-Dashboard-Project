@@ -42,18 +42,6 @@ http://127.0.0.1:5000
 
 ---
 
-## 🌐 Deploy on Render (Free)
-
-1. Push this folder to a GitHub repo
-2. Go to [render.com](https://render.com) → New → Web Service
-3. Connect your GitHub repo
-4. Set:
-   - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `gunicorn app:app`
-5. Click Deploy ✅
-
----
-
 ## 📂 Project Structure
 
 ```
